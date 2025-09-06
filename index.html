@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sudoku Squads</title>
+<style>
+  :root {
+    --bg:#0f1220; --panel:#141933; --muted:#8a91b7; --accent:#5ae0a3;
+    --warn:#ff6b6b; --grid:#1f2551; --cell:#0f1220; --cell-hi:#1a2050;
+    --cell-lock:#23308a; --text:#e6e8ff; --sub:#2a3270;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0d1020,#0c0f1b);color:var(--text);font:15px/1.35 Inter,system-ui,Segoe UI,Roboto,Arial}
+  header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 16px;background:#0b0e1a;border-bottom:1px solid #1e244d;position:sticky;top:0;z-index:5}
+  header .left, header .right{display:flex;gap:8px;align-items:center}
+  .brand{font-weight:700;letter-spacing:.3px}
+  .tag{padding:4px 8px;border:1px solid #2a3270;border-radius:8px;color:var(--muted)}
+  .btn{background:var(--panel);border:1px solid #2a3270;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
+  .btn:hover{border-color:#3b469b}
+  .btn.acc{background:linear-gradient(90deg,#38d6e6,#5ae0a3);color:#0b0f24;border:none}
+
+  /* Wider left column + fluid board */
+  .container{
+    display:grid;
+    grid-template-columns:minmax(520px,1fr) 1fr 340px;
+    gap:16px;
+    padding:16px;
+    max-width:1600px;
+    margin:0 auto;
+  }
+  .card{background:var(--panel);border:1px solid #222a62;border-radius:16px;padding:12px;overflow:hidden}
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(9,1fr);
+    gap:2px;
+    background:var(--grid);
+    padding:6px;
+    border-radius:12px;
+    user-select:none;
+    width:100%;
+    max-width:640px;     /* cap on huge screens */
+    margin:0 auto;       /* center in card */
+  }
+  .cell{
+    aspect-ratio:1/1;
+    background:var(--cell);
+    display:flex;align-items:center;justify-content:center;
+    border-radius:8px;font-weight:700;
+    font-size:clamp(14px,2.2vw,22px);
+    position:relative;cursor:pointer;
+    /* no margins here anymore */
+  }
+  .cell.prefilled{color:#a7b3ff;background:#12173a}
+  .cell.selected{outline:2px solid var(--accent);outline-offset:-2px;background:var(--cell-hi)}
+  .cell.locked{background:var(--cell-lock)}
+  .cell.error{animation:shake .3s linear}
+  @keyframes shake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
+
+  .numPad{display:grid;grid-template-columns:repeat(9,1fr);gap:8px;margin-top:8px}
+  .numBtn{padding:10px 0;background:#111738;border:1px solid #2a3270;border-radius:10px;text-align:center;cursor:pointer;font-weight:700}
+  .numBtn:hover{border-color:#3b469b}
+  .muted{color:var(--muted)}
+  .flex{display:flex;gap:8px;align-items:center}
+  .col{display:flex;flex-direction:column;gap:8px}
+  .players .item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:10px;background:#101637;border:1px solid #222a62}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .pill{padding:4px 8px;border-radius:999px;background:#0e1431;border:1px solid #27307a;color:#cdd3ff}
+  .chat{height:260px;overflow:auto;padding:8px;background:#0e1330;border:1px solid #222a62;border-radius:10px}
+  .chat .msg{margin-bottom:6px}
+  .chat input{width:100%;padding:10px;border-radius:10px;border:1px solid #222a62;background:#0c112c;color:var(--text)}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+  .small{font-size:12px}
+  .leader li{margin:6px 0;padding:6px 8px;background:#0f1435;border:1px solid #212861;border-radius:8px}
+  .cursor{position:absolute;inset:2px;pointer-events:none;border-radius:6px;border:2px dashed rgba(255,255,255,.25)}
+  .cursor::after{content:attr(data-name);position:absolute;top:-10px;right:2px;font-size:10px;padding:2px 6px;border-radius:6px;background:#0b0e1a;border:1px solid #2a3270}
+
+  @media(max-width:1280px){
+    .container{grid-template-columns:minmax(480px,1fr) 1fr 320px;}
+  }
+  @media(max-width:1100px){
+    .container{grid-template-columns:1fr;}
+    .grid{max-width:min(92vw,640px);}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="left">
+    <div class="brand">🧩 Sudoku Squads</div>
+    <div id="roomTag" class="tag">Room: —</div>
+    <div id="statusTag" class="tag">Status: Lobby</div>
+  </div>
+  <div class="right">
+    <div class="tag">⏱ <span id="timer">00:00</span></div>
+    <div class="tag">✅ <span id="progress">0/81</span></div>
+    <button id="newRoomBtn" class="btn" disabled>Create Room</button>
+    <input id="joinCode" class="tag" placeholder="Enter code…"/>
+    <button id="joinBtn" class="btn acc" disabled>Join</button>
+  </div>
+</header>
+
+<div class="container">
+  <div class="card">
+    <div id="grid" class="grid"></div>
+    <div class="toolbar" style="margin-top:8px">
+      <button class="btn" id="eraseBtn">Erase</button>
+      <button class="btn" id="hintBtn">Hint (-5)</button>
+      <button class="btn" id="checkBtn">Check</button>
+      <button class="btn" id="resetBtn">Reset</button>
+    </div>
+    <div class="numPad" id="numPad"></div>
+    <div class="small muted" id="msg"></div>
+  </div>
+
+  <div class="card col">
+    <div class="flex">
+      <span class="pill">You: <span id="meName">—</span></span>
+      <span class="pill">Score: <span id="meScore">0</span></span>
+      <span class="pill">Mistakes: <span id="meMistakes">0</span></span>
+    </div>
+    <div class="players col" id="players"></div>
+    <div class="col">
+      <div class="muted small">Chat</div>
+      <div class="chat" id="chatLog"></div>
+      <div class="flex">
+        <input id="chatInput" placeholder="Type message…"/>
+        <button id="sendBtn" class="btn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex" style="justify-content:space-between">
+      <div class="muted">Daily Leaderboard</div>
+      <button id="refreshLb" class="btn small">Refresh</button>
+    </div>
+    <ol id="leader" class="leader"></ol>
+    <div class="small muted">Daily resets at 00:00 UTC</div>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js";
+  import { getDatabase, ref, set, get, update, onValue, push, serverTimestamp, runTransaction, onDisconnect } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-database.js";
+
+  // ---- Firebase config (correct bucket) ----
+  const firebaseConfig = {
+    apiKey: "add your firebase config here",
+    authDomain: "add your firebase config here",
+    databaseURL: "add your firebase config here",
+    projectId: "squadoku",
+    storageBucket: "add your firebase config here",
+    messagingSenderId: "add your firebase config here",
+    appId: "1add your firebase config here"
+  };
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth();
+  const db = getDatabase();
+
+  // ---- DOM helpers ----
+  const $=s=>document.querySelector(s);
+  const gridEl=$("#grid"), msgEl=$("#msg"), timerEl=$("#timer"), progressEl=$("#progress"), playersEl=$("#players"), chatLog=$("#chatLog"), leaderEl=$("#leader");
+  const COLORS=["#5ae0a3","#38d6e6","#f6c85f","#ed6a5a","#b15cff","#57c7ff","#ff9f1c","#7bdff2"];
+  const randomColor=()=>COLORS[Math.floor(Math.random()*COLORS.length)];
+  const randomName=()=> "Player"+Math.floor(1000+Math.random()*9000);
+  const todayKeyUTC=()=> new Date().toISOString().slice(0,10);
+
+  let state={ uid:null, me:{name:null,color:null,score:0,mistakes:0}, roomCode:null, selectedIndex:null,
+              puzzle:null, solution:null, grid:Array(81).fill(0), prefilled:new Set(),
+              locks:{}, players:{}, cursors:{}, startAt:null, status:"lobby", complete:false };
+
+  // ---- Auth gating ----
+  async function ensureAuth(){ if(auth.currentUser) return auth.currentUser;
+    const cred=await signInAnonymously(auth); return cred.user; }
+  $("#newRoomBtn").disabled=true; $("#joinBtn").disabled=true;
+
+  onAuthStateChanged(auth, async user=>{
+    if(!user){ try{ await signInAnonymously(auth);}catch{} return; }
+    $("#newRoomBtn").disabled=false; $("#joinBtn").disabled=false;
+    const name=user.displayName||randomName(); try{ await updateProfile(user,{displayName:name}); }catch{}
+    state.uid=user.uid; state.me.name=name; state.me.color=state.me.color||randomColor();
+    $("#meName").textContent=state.me.name;
+  });
+
+  // ---- Sudoku gen/solve ----
+  const idx=(r,c)=>r*9+c, rowOf=i=>Math.floor(i/9), colOf=i=>i%9;
+  function possible(g,i,n){
+    const r=rowOf(i),c=colOf(i);
+    for(let k=0;k<9;k++){ if(g[idx(r,k)]===n||g[idx(k,c)]===n) return false; }
+    const br=Math.floor(r/3)*3,bc=Math.floor(c/3)*3;
+    for(let rr=0;rr<3;rr++) for(let cc=0;cc<3;cc++){ if(g[idx(br+rr,bc+cc)]===n) return false; }
+    return true;
+  }
+  function solve(grid){ const g=[...grid];
+    function dfs(i=0){ while(i<81&&g[i]!==0)i++; if(i===81) return true;
+      for(let n=1;n<=9;n++){ if(possible(g,i,n)){ g[i]=n; if(dfs(i+1)) return true; g[i]=0; } }
+      return false; }
+    return dfs(0)?g:null;
+  }
+  function generateFull(){ const g=Array(81).fill(0);
+    for(let b=0;b<3;b++){ const nums=[1,2,3,4,5,6,7,8,9].sort(()=>Math.random()-0.5); const r=b*3,c=b*3; let k=0;
+      for(let dr=0;dr<3;dr++) for(let dc=0;dc<3;dc++) g[idx(r+dr,c+dc)]=nums[k++]; }
+    return solve(g);
+  }
+  function generatePuzzle(holeCount=50){
+    const full=generateFull(), puzzle=[...full];
+    let removed=0; const spots=[...Array(81).keys()].sort(()=>Math.random()-0.5);
+    for(const i of spots){
+      const j=80-i, oi=puzzle[i], oj=puzzle[j];
+      if(oi===0&&oj===0) continue;
+      puzzle[i]=0; puzzle[j]=0;
+      if(!solve(puzzle)){ puzzle[i]=oi; puzzle[j]=oj; }
+      else { removed+=(oi?1:0)+(oj?1:0); if(removed>=holeCount) break; }
+    }
+    return {puzzle,solution:full};
+  }
+
+  // ---- UI: build grid WITHOUT margins; draw subgrid lines with box-shadows ----
+  function buildUI(){
+    gridEl.innerHTML="";
+    for(let i=0;i<81;i++){
+      const cell=document.createElement("div");
+      cell.className="cell";
+      cell.dataset.index=i;
+      // draw thicker lines every 3 rows/cols using inset shadows
+      const r=rowOf(i), c=colOf(i);
+      const sh=[];
+      if(c%3===0) sh.push(`inset 2px 0 0 0 var(--sub)`);       // left
+      if(c%3===2) sh.push(`inset -2px 0 0 0 var(--sub)`);      // right
+      if(r%3===0) sh.push(`inset 0 2px 0 0 var(--sub)`);       // top
+      if(r%3===2) sh.push(`inset 0 -2px 0 0 var(--sub)`);      // bottom
+      cell.style.boxShadow = sh.join(", ");
+      cell.addEventListener("click",()=>selectCell(i,true));
+      gridEl.appendChild(cell);
+    }
+    const pad=$("#numPad"); pad.innerHTML="";
+    for(let n=1;n<=9;n++){
+      const b=document.createElement("div");
+      b.className="numBtn"; b.textContent=n;
+      b.addEventListener("click",()=>placeNumber(n));
+      pad.appendChild(b);
+    }
+  }
+  buildUI();
+
+  function renderGrid(){
+    let filled=0;
+    for(let i=0;i<81;i++){
+      const v=state.grid[i];
+      const el=gridEl.children[i];
+      el.textContent=v? v:"";
+      el.classList.toggle("prefilled", state.prefilled.has(i));
+      el.classList.toggle("locked", !!state.locks[i] && state.locks[i]!==state.uid);
+      el.classList.toggle("selected", state.selectedIndex===i);
+      [...el.querySelectorAll(".cursor")].forEach(n=>n.remove());
+      for(const [uid,cur] of Object.entries(state.cursors)){
+        if(cur.index===i && uid!==state.uid){
+          const c=document.createElement("div");
+          c.className="cursor";
+          c.style.borderColor = cur.color+"77";
+          c.dataset.name = cur.name;
+          el.appendChild(c);
+        }
+      }
+      if(v) filled++;
+    }
+    progressEl.textContent=`${filled}/81`;
+  }
+  function selectCell(i,broadcast=false){
+    state.selectedIndex=i; renderGrid();
+    if(broadcast&&state.roomCode&&state.uid){
+      update(ref(db,`rooms/${state.roomCode}/players/${state.uid}`),{cursor:i});
+    }
+  }
+
+  // ---- Rooms / Multiplayer ----
+  function codeGen(){const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let s="";for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)];return s;}
+  async function createRoom(){
+    await ensureAuth();
+    const code=codeGen();
+    const {puzzle,solution}=generatePuzzle(50);
+    const grid=[...puzzle]; const prefilled=[]; for(let i=0;i<81;i++) if(puzzle[i]!==0) prefilled.push(i);
+    const roomRef=ref(db,`rooms/${code}`);
+    await set(roomRef,{createdAt:serverTimestamp(),host:state.uid,status:"active",startAt:serverTimestamp(),puzzle,solution,grid,prefilled,players:{},locks:{},chat:{},stats:{moves:0,mistakes:0}});
+    await joinRoom(code);
+  }
+  async function joinRoom(code){
+    await ensureAuth();
+    code=(code||$("#joinCode").value||"").toUpperCase().trim();
+    if(!code){ toast("Enter a room code"); return; }
+    const roomRef=ref(db,`rooms/${code}`);
+    const snap=await get(roomRef); if(!snap.exists()){ toast("Room not found"); return; }
+    state.roomCode=code; $("#roomTag").textContent=`Room: ${code}`; $("#statusTag").textContent="Status: Active";
+    const pRef=ref(db,`rooms/${code}/players/${state.uid}`); const myColor=state.me.color||randomColor();
+    await set(pRef,{name:state.me.name,color:myColor,score:0,mistakes:0,joinedAt:serverTimestamp(),cursor:null,online:true});
+    onDisconnect(pRef).update({online:false,cursor:null});
+    onValue(roomRef,(snap)=>{
+      const data=snap.val(); if(!data) return;
+      state.puzzle=data.puzzle; state.solution=data.solution; state.grid=data.grid; state.locks=data.locks||{};
+      state.prefilled=new Set(data.prefilled||[]); state.players=data.players||{}; state.status=data.status; state.startAt=data.startAt;
+      const cursors={}; Object.entries(state.players).forEach(([uid,p])=>{ if(p.cursor!=null) cursors[uid]={index:p.cursor,name:p.name,color:p.color||"#fff"}; });
+      state.cursors=cursors; renderGrid(); renderPlayers(); computeTimer(data.startAt);
+      if(data.status==="complete") $("#statusTag").textContent="Status: Complete";
+    });
+    onValue(ref(db,`rooms/${code}/chat`),(snap)=>{
+      chatLog.innerHTML=""; const vals=snap.val()||{}; const msgs=Object.values(vals).sort((a,b)=>(a.ts||0)-(b.ts||0));
+      for(const m of msgs){ const div=document.createElement("div"); div.className="msg";
+        div.innerHTML=`<span class="pill" style="background:#0b1030;border-color:var(--sub)">${escapeHtml(m.name)}</span> ${escapeHtml(m.text||"")}`; chatLog.appendChild(div); }
+      chatLog.scrollTop=chatLog.scrollHeight;
+    });
+  }
+
+  // ---- Actions ----
+  async function placeNumber(n){
+    if(state.selectedIndex==null) return;
+    const i=state.selectedIndex;
+    if(state.prefilled.has(i)) return toast("Can't edit fixed cell");
+    if(state.locks[i] && state.locks[i]!==state.uid) return toast("Cell locked by teammate");
+    if(!state.roomCode) return;
+
+    await update(ref(db,`rooms/${state.roomCode}/locks`),{[i]:state.uid});
+    await runTransaction(ref(db,`rooms/${state.roomCode}/grid/${i}`),(cur)=>{ if(cur&&cur===state.solution[i]) return cur; return n; });
+
+    const correct=(n===state.solution[i]);
+    if(correct){ await runTransaction(ref(db,`rooms/${state.roomCode}/players/${state.uid}/score`),s=>(s||0)+10); }
+    else{ await runTransaction(ref(db,`rooms/${state.roomCode}/players/${state.uid}/mistakes`),m=>(m||0)+1); const cellEl=gridEl.children[i]; cellEl.classList.add("error"); setTimeout(()=>cellEl.classList.remove("error"),300); }
+
+    await update(ref(db,`rooms/${state.roomCode}/locks`),{[i]:null});
+
+    const fullSnap=await get(ref(db,`rooms/${state.roomCode}/grid`)); const g=fullSnap.val();
+    let complete=true; for(let k=0;k<81;k++){ if(g[k]!==state.solution[k]){ complete=false; break; } }
+    if(complete){ await update(ref(db,`rooms/${state.roomCode}`),{status:"complete",completeAt:serverTimestamp()}); await postToLeaderboard(state.roomCode); toast("🎉 Puzzle complete! Logged to daily leaderboard."); }
+  }
+
+  $("#eraseBtn").onclick=async()=>{
+    if(state.selectedIndex==null) return;
+    const i=state.selectedIndex; if(state.prefilled.has(i)) return;
+    if(state.locks[i] && state.locks[i]!==state.uid) return; if(!state.roomCode) return;
+    await set(ref(db,`rooms/${state.roomCode}/grid/${i}`),0);
+  };
+
+  $("#hintBtn").onclick=async()=>{
+    if(state.selectedIndex==null) return;
+    const i=state.selectedIndex; if(state.prefilled.has(i)) return;
+    const n=state.solution[i]; await placeNumber(n);
+    await runTransaction(ref(db,`rooms/${state.roomCode}/players/${state.uid}/score`),s=>Math.max(0,(s||0)-5));
+  };
+
+  $("#checkBtn").onclick=()=>{
+    let wrong=0, empty=0;
+    for(let i=0;i<81;i++){ if(state.grid[i]===0) empty++; else if(state.grid[i]!==state.solution[i]) wrong++; }
+    toast(`🧮 Empty: ${empty}, Incorrect: ${wrong}`);
+  };
+
+  $("#resetBtn").onclick=async()=>{
+    if(!state.roomCode) return;
+    await update(ref(db,`rooms/${state.roomCode}`),{grid:state.puzzle,status:"active"});
+    toast("Board reset to puzzle.");
+  };
+
+  // ---- Chat & Leaderboard ----
+  $("#sendBtn").onclick=sendChat;
+  $("#chatInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") sendChat(); });
+  async function sendChat(){
+    await ensureAuth();
+    const t=$("#chatInput").value.trim(); if(!t||!state.roomCode) return;
+    $("#chatInput").value="";
+    await push(ref(db,`rooms/${state.roomCode}/chat`),{uid:state.uid,name:state.me.name,color:state.me.color,text:t,ts:Date.now()});
+  }
+
+  $("#refreshLb").onclick=loadLeaderboard;
+
+  async function postToLeaderboard(roomCode){
+    const roomRef=ref(db,`rooms/${roomCode}`); const snap=await get(roomRef); if(!snap.exists()) return;
+    const data=snap.val(); const start=data.startAt?data.startAt:Date.now(); const end=Date.now();
+    const timeMs=Math.max(0,end-start);
+    let attempts=0, mistakes=0;
+    for(const p of Object.values(data.players||{})){ attempts+=((p.score||0)/10)+(p.mistakes||0); mistakes+=(p.mistakes||0); }
+    const acc=attempts?Math.max(0,Math.min(1,((attempts-mistakes)/attempts))):1;
+
+    const day=todayKeyUTC();
+    const lbRef=ref(db,`leaderboards/${day}/${roomCode}`);
+    await set(lbRef,{room:roomCode,timeMs,acc,completedAt:Date.now(),players:Object.values(data.players||{}).map(p=>({name:p.name,color:p.color,score:p.score||0})).slice(0,6)});
+    await loadLeaderboard();
+  }
+
+  async function loadLeaderboard(){
+    const day=todayKeyUTC(); const snap=await get(ref(db,`leaderboards/${day}`));
+    leaderEl.innerHTML=""; if(!snap.exists()){ leaderEl.innerHTML="<li>No entries yet.</li>"; return; }
+    const entries=Object.values(snap.val()); entries.sort((a,b)=>(a.timeMs||1e15)-(b.timeMs||1e15));
+    for(let i=0;i<Math.min(10,entries.length);i++){
+      const e=entries[i]; const secs=Math.floor((e.timeMs||0)/1000);
+      const mm=String(Math.floor(secs/60)).padStart(2,"0"); const ss=String(secs%60).padStart(2,"0");
+      const acc=Math.round((e.acc||0)*100); const team=(e.players||[]).map(p=>p.name).join(", ");
+      const li=document.createElement("li"); li.textContent=`#${i+1} • ${mm}:${ss} • ${acc}% • ${team}`; leaderEl.appendChild(li);
+    }
+  }
+
+  // ---- Keyboard + cursors ----
+  document.addEventListener("keydown",(e)=>{
+    if(!state.roomCode) return;
+    if(e.key>='1'&&e.key<='9') placeNumber(+e.key);
+    if(e.key==='Backspace'||e.key==='Delete') $("#eraseBtn").click();
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){
+      e.preventDefault();
+      let i=state.selectedIndex??40;
+      if(e.key==="ArrowUp") i=(i-9+81)%81;
+      if(e.key==="ArrowDown") i=(i+9)%81;
+      if(e.key==="ArrowLeft") i=i%9===0?i+8:i-1;
+      if(e.key==="ArrowRight") i=i%9===8?i-8:i+1;
+      selectCell(i,true);
+    }
+  });
+
+  // ---- Render helpers ----
+  function renderPlayers(){
+    $("#meScore").textContent=state.players[state.uid]?.score||0;
+    $("#meMistakes").textContent=state.players[state.uid]?.mistakes||0;
+    playersEl.innerHTML="";
+    const arr=Object.entries(state.players).map(([uid,p])=>({uid,...p})).sort((a,b)=>(b.score||0)-(a.score||0));
+    for(const p of arr){
+      const div=document.createElement("div"); div.className="item";
+      div.innerHTML=`<div class="dot" style="background:${p.color||'#aaa'}"></div>
+        <div style="flex:1"><div>${escapeHtml(p.name||'Player')}</div><div class="small muted">${p.online?'🟢 online':'⚪ offline'}</div></div>
+        <div class="pill">⭐ ${p.score||0}</div><div class="pill">❌ ${p.mistakes||0}</div>`;
+      playersEl.appendChild(div);
+    }
+  }
+  function toast(t){ msgEl.textContent=t; setTimeout(()=>{ if(msgEl.textContent===t) msgEl.textContent=""; },2500); }
+  function computeTimer(startAt){
+    if(!startAt){ timerEl.textContent="00:00"; return; }
+    let start=typeof startAt==="number"?startAt:Date.now();
+    const upd=()=>{ if(state.status==="complete") return; const ms=Date.now()-start;
+      const s=Math.floor(ms/1000); const mm=String(Math.floor(s/60)).padStart(2,"0"); const ss=String(s%60).padStart(2,"0");
+      timerEl.textContent=`${mm}:${ss}`; requestAnimationFrame(upd); };
+    requestAnimationFrame(upd);
+  }
+  function escapeHtml(s){ return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c])); }
+
+  // ---- Buttons ----
+  $("#newRoomBtn").onclick=createRoom;
+  $("#joinBtn").onclick=()=>joinRoom($("#joinCode").value);
+
+  // ---- Offline preview ----
+  (function previewLocal(){
+    const {puzzle,solution}=generatePuzzle(52);
+    state.puzzle=puzzle; state.solution=solution; state.grid=[...puzzle];
+    for(let i=0;i<81;i++) if(puzzle[i]!==0) state.prefilled.add(i);
+    renderGrid();
+  })();
+</script>
+</body>
+</html>
